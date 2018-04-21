@@ -1,0 +1,225 @@
+﻿using System;
+using System.Collections.Concurrent;
+using System.Reactive;
+using System.Reactive.Concurrency;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace ParallelProcessing
+{
+    public class ParallelProcessor<TInput, TOutput> : IDisposable
+    {
+        private readonly ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>> _subscriptions = new ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>>();
+
+        private readonly Processor[] _processors;
+        private readonly Thread _observableThread;
+        private readonly IObserver<WrappedObject<TOutput>> _observer;
+        private readonly IObservable<WrappedObject<TOutput>> _observable;
+
+        private readonly BlockingCollection<WrappedObject<TInput>> _availableInputs;
+        private readonly BlockingCollection<WrappedObject<TOutput>> _availableOutputs;
+
+        private volatile bool _isDisposed;
+
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor) : this(processor, Environment.ProcessorCount) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlockingAdd) : this(processor, Environment.ProcessorCount, ThreadPriority.Normal, isBlockingAdd) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, ThreadPriority threadPriority) : this(processor, Environment.ProcessorCount, threadPriority, false) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlockingAdd)
+        {
+            if (isBlockingAdd)
+            {
+                _availableInputs = new BlockingCollection<WrappedObject<TInput>>(threadCount);
+            }
+            else
+            {
+                _availableInputs = new BlockingCollection<WrappedObject<TInput>>();
+            }
+
+            _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>();
+            _processors = new Processor[threadCount];
+
+            for (int i = 0; i < _processors.Length; i++)
+            {
+                _processors[i] = new Processor(threadPriority, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, _availableOutputs);
+            }
+
+            _observableThread = new Thread(ProcessResults);
+            _observableThread.Priority = threadPriority;
+            _observableThread.IsBackground = true;
+            _observableThread.Start();
+
+            _observer = CreateObserver();
+
+            _observable = Observable.Create<WrappedObject<TOutput>>(x =>
+            {
+                var id = Guid.NewGuid();
+
+                _subscriptions.TryAdd(id, x);
+
+                return Disposable.Create(() => _subscriptions.TryRemove(id, out var _));
+            });
+        }
+
+        public IObservable<TOutput> GetObservable()
+        {
+            return GetInternalObservable()
+                .Select(x => x.Object)
+                .AsObservable();
+        }
+
+        public void ProcessObject(TInput input)
+        {
+            AddInput(new WrappedObject<TInput>(input));
+        }
+
+        protected virtual void AddInput(WrappedObject<TInput> wrappedObject)
+        {
+            _availableInputs.Add(wrappedObject);
+        }
+
+        protected virtual IObservable<WrappedObject<TOutput>> GetInternalObservable()
+        {
+            return _observable;
+        }
+
+        private void ProcessResults()
+        {
+            while (!_isDisposed && !_availableOutputs.IsCompleted)
+            {
+                if (_availableOutputs.TryTake(out var output, int.MaxValue))
+                {
+                    if (_isDisposed || _availableOutputs.IsCompleted)
+                    {
+                        break;
+                    }
+
+                    _observer.OnNext(output);
+                }
+            }
+
+            _observer.OnCompleted();
+        }        
+
+        private IObserver<WrappedObject<TOutput>> CreateObserver()
+        {
+            return Observer
+                .Create<WrappedObject<TOutput>>(
+                x =>
+                {
+                    foreach (var s in _subscriptions)
+                    {
+                        s.Value.OnNext(x);
+                    }
+                },
+                ex =>
+                {
+                    foreach (var s in _subscriptions)
+                    {
+                        s.Value.OnError(ex);
+                    }
+                },
+                () =>
+                {
+                    foreach (var s in _subscriptions)
+                    {
+                        s.Value.OnCompleted();
+                    }
+                });
+        }
+
+        public virtual void Dispose()
+        {
+            if (!_isDisposed)
+            {
+                _isDisposed = true;
+
+                if (!_availableInputs.IsAddingCompleted)
+                {
+                    _availableInputs.CompleteAdding();
+                }
+
+                if (!_availableOutputs.IsAddingCompleted)
+                {
+                    _availableOutputs.CompleteAdding();
+                }
+
+                if (_observableThread.IsAlive)
+                {
+                    _observableThread.Join();
+                }
+
+                foreach (var p in _processors)
+                {
+                    p.Dispose();
+                }
+
+                _availableInputs.Dispose();
+                _availableOutputs.Dispose();
+            }
+        }
+
+        protected class Processor : IDisposable
+        {
+            private volatile bool _isDisposed;
+
+            private readonly Thread _thread;
+            private readonly IProcessor<TInput, TOutput> _processor;
+            private readonly BlockingCollection<WrappedObject<TInput>> _inputs;
+            private readonly BlockingCollection<WrappedObject<TOutput>> _outputs;
+
+            public Processor(ThreadPriority priority, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, BlockingCollection<WrappedObject<TOutput>> outputs)
+            {
+                _processor = processor;
+                _inputs = inputs;
+                _outputs = outputs;
+
+                _thread = new Thread(ProcessLoop);
+                _thread.IsBackground = true;
+                _thread.Priority = priority;
+                _thread.Name = name;
+                _thread.Start();
+            }
+
+            private void ProcessLoop()
+            {
+                while (!_isDisposed && !_inputs.IsCompleted)
+                {
+                    if (_inputs.TryTake(out var input, int.MaxValue))
+                    {
+                        var result = _processor.Process(input.Object);
+
+                        if (_isDisposed || _outputs.IsAddingCompleted)
+                        {
+                            break;
+                        }
+
+                        _outputs.Add(new WrappedObject<TOutput>(result, input.Id));
+                    }
+                }
+            }
+
+            public void Dispose()
+            {
+                _isDisposed = true;
+
+                _thread.Join();
+            }
+        }
+
+        protected struct WrappedObject<T>
+        {
+            public Guid Id { get; }
+            public T Object { get; }
+
+            public WrappedObject(T input) : this(input, Guid.NewGuid()) { }
+            public WrappedObject(T input, Guid id) : this()
+            {
+                this.Id = id;
+                this.Object = input;
+            }
+        }
+    }
+}
