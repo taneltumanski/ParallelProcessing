@@ -5,6 +5,20 @@
     <VersionPrefix>0.1.0</VersionPrefix>
   </PropertyGroup>
 
+  <PropertyGroup Label="Nuget">
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <Authors>Tanel Tumanski</Authors>
+    <Product />
+    <Company></Company>
+    <Description>Small helper for processing work items on separate threads continuously.</Description>
+    <PackageProjectUrl>https://github.com/taneltumanski/ParallelProcessing</PackageProjectUrl>
+    <PackageLicenseUrl>https://github.com/taneltumanski/ParallelProcessing/blob/master/LICENSE</PackageLicenseUrl>
+    <RepositoryUrl>https://github.com/taneltumanski/ParallelProcessing</RepositoryUrl>
+    <RepositoryType>Git</RepositoryType>
+    <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+    <PackageTags>threading parallel-processing</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Reactive" Version="3.1.1" />
   </ItemGroup>
