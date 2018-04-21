@@ -6,7 +6,8 @@
   </PropertyGroup>
 
   <PropertyGroup Label="Nuget">
-    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <IsPackable>true</IsPackable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <Authors>Tanel Tumanski</Authors>
     <Product />
     <Company></Company>
