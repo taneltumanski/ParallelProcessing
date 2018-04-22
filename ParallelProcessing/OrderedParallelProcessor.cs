@@ -11,8 +11,6 @@ using System.Threading;
 namespace ParallelProcessing
 {
     public class OrderedParallelProcessor<TInput, TOutput> : ParallelProcessor<TInput, TOutput>
-        where TInput : class
-        where TOutput : class
     {
         private readonly ConcurrentQueue<Guid> _idQueue = new ConcurrentQueue<Guid>();
 
@@ -31,36 +29,44 @@ namespace ParallelProcessing
 
         protected override IObservable<WrappedObject<TOutput>> GetInternalObservable()
         {
-            var baseObservable = base.GetInternalObservable();
-
             return Observable.Create<WrappedObject<TOutput>>(observer =>
             {
-                var lockObject = new object();
                 var cachedObjects = new ConcurrentDictionary<Guid, WrappedObject<TOutput>>();
 
                 var orderedObserver = Observer
                     .Create<WrappedObject<TOutput>>(next =>
                     {
                         var sent = true;
+                        Guid nextId;
 
-                        cachedObjects.TryAdd(next.Id, next);
-
-                        do
+                        if (_idQueue.TryDequeue(out nextId) && nextId == next.Id)
                         {
-                            if (_idQueue.TryPeek(out var nextId) && cachedObjects.TryRemove(nextId, out var result))
+                            _idQueue.TryDequeue(out var _);
+                            observer.OnNext(next);
+                        }
+                        else
+                        {
+                            cachedObjects.TryAdd(next.Id, next);
+                            sent = false;
+                        }
+
+                        while (sent)
+                        {
+                            if (_idQueue.TryPeek(out nextId) && cachedObjects.TryRemove(nextId, out var result))
                             {
                                 _idQueue.TryDequeue(out var _);
-
                                 observer.OnNext(result);
                             }
                             else
                             {
                                 sent = false;
                             }
-                        } while (sent);
+                        }
                     }, ex => observer.OnError(ex), () => observer.OnCompleted());
 
-                return baseObservable.Subscribe(orderedObserver);
+                return base
+                    .GetInternalObservable()
+                    .Subscribe(orderedObserver);
             });
         }
     }
