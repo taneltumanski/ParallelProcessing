@@ -99,7 +99,7 @@ namespace ParallelProcessing.Test
                         processor.ProcessObject(new Temp1() { Test1 = item });
                     }
 
-                    SpinWait.SpinUntil(() => list.Count == items.Length, TimeSpan.FromSeconds(1));
+                    SpinWait.SpinUntil(() => list.Count == items.Length, TimeSpan.FromSeconds(10));
 
                     Assert.AreEqual(items.Length, list.Count);
                     Assert.IsTrue(items.SequenceEqual(list.Select(x => x.Test2)));
