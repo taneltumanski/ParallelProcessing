@@ -39,7 +39,7 @@ namespace ParallelProcessing
                         var sent = true;
                         Guid nextId;
 
-                        if (_idQueue.TryDequeue(out nextId) && nextId == next.Id)
+                        if (_idQueue.TryPeek(out nextId) && nextId == next.Id)
                         {
                             _idQueue.TryDequeue(out var _);
                             observer.OnNext(next);
