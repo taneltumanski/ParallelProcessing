@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace ParallelProcessing
 {
-    public class ParallelProcessor<TInput, TOutput> : IDisposable
+    public class ParallelProcessor<TInput, TOutput> : IParallelProcessor<TInput, TOutput>, IDisposable
     {
         private readonly ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>> _subscriptions = new ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>>();
 
@@ -29,6 +29,11 @@ namespace ParallelProcessing
         public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false) { }
         public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlockingAdd)
         {
+            if (processor == null)
+            {
+                throw new ArgumentNullException(nameof(processor));
+            }
+
             if (isBlockingAdd)
             {
                 _availableInputs = new BlockingCollection<WrappedObject<TInput>>(threadCount);
