@@ -25,31 +25,32 @@ namespace ParallelProcessing
         private long _id = 0;
 
         public ParallelProcessor(IProcessor<TInput, TOutput> processor) : this(processor, Environment.ProcessorCount) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlockingAdd) : this(processor, Environment.ProcessorCount, ThreadPriority.Normal, isBlockingAdd) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlocking) : this(processor, Environment.ProcessorCount, ThreadPriority.Normal, isBlocking) { }
         public ParallelProcessor(IProcessor<TInput, TOutput> processor, ThreadPriority threadPriority) : this(processor, Environment.ProcessorCount, threadPriority, false) { }
         public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlockingAdd)
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlocking)
         {
             if (processor == null)
             {
                 throw new ArgumentNullException(nameof(processor));
             }
 
-            if (isBlockingAdd)
+            if (isBlocking)
             {
                 _availableInputs = new BlockingCollection<WrappedObject<TInput>>(threadCount);
+                _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>(threadCount);
             }
             else
             {
                 _availableInputs = new BlockingCollection<WrappedObject<TInput>>();
+                _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>();
             }
-
-            _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>();
+            
             _processors = new Processor[threadCount];
 
             for (int i = 0; i < _processors.Length; i++)
             {
-                _processors[i] = new Processor(threadPriority, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, _availableOutputs);
+                _processors[i] = new Processor(threadPriority, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
             }
 
             _observableThread = new Thread(ProcessResults);
@@ -83,7 +84,22 @@ namespace ParallelProcessing
 
         protected virtual void AddInput(WrappedObject<TInput> wrappedObject)
         {
+            if (_isDisposed || _availableInputs.IsAddingCompleted)
+            {
+                throw new ObjectDisposedException(this.GetType().Name);
+            }
+
             _availableInputs.Add(wrappedObject);
+        }
+
+        protected virtual void AddOutput(WrappedObject<TOutput> wrappedObject)
+        {
+            if (_isDisposed || _availableOutputs.IsAddingCompleted)
+            {
+                throw new ObjectDisposedException(this.GetType().Name);
+            }
+
+            _availableOutputs.Add(wrappedObject);
         }
 
         protected virtual IObservable<WrappedObject<TOutput>> GetInternalObservable()
@@ -174,13 +190,13 @@ namespace ParallelProcessing
             private readonly Thread _thread;
             private readonly IProcessor<TInput, TOutput> _processor;
             private readonly BlockingCollection<WrappedObject<TInput>> _inputs;
-            private readonly BlockingCollection<WrappedObject<TOutput>> _outputs;
+            private readonly Action<WrappedObject<TOutput>> _addOutputAction;
 
-            public Processor(ThreadPriority priority, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, BlockingCollection<WrappedObject<TOutput>> outputs)
+            public Processor(ThreadPriority priority, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, Action<WrappedObject<TOutput>> addOutputAction)
             {
                 _processor = processor;
                 _inputs = inputs;
-                _outputs = outputs;
+                _addOutputAction = addOutputAction;
 
                 _thread = new Thread(ProcessLoop);
                 _thread.IsBackground = true;
@@ -197,12 +213,12 @@ namespace ParallelProcessing
                     {
                         var result = _processor.Process(input.Object);
 
-                        if (_isDisposed || _outputs.IsAddingCompleted)
+                        if (_isDisposed)
                         {
                             break;
                         }
 
-                        _outputs.Add(new WrappedObject<TOutput>(result, input.Id));
+                        _addOutputAction(new WrappedObject<TOutput>(result, input.Id));
                     }
                 }
             }
