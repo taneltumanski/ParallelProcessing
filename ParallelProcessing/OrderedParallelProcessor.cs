@@ -12,7 +12,7 @@ namespace ParallelProcessing
 {
     public class OrderedParallelProcessor<TInput, TOutput> : ParallelProcessor<TInput, TOutput>
     {
-        private readonly ConcurrentQueue<Guid> _idQueue = new ConcurrentQueue<Guid>();
+        private readonly ConcurrentQueue<long> _idQueue = new ConcurrentQueue<long>();
 
         public OrderedParallelProcessor(IProcessor<TInput, TOutput> processor) : base(processor) { }
         public OrderedParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlockingAdd) : base(processor, isBlockingAdd) { }
@@ -31,13 +31,13 @@ namespace ParallelProcessing
         {
             return Observable.Create<WrappedObject<TOutput>>(observer =>
             {
-                var cachedObjects = new ConcurrentDictionary<Guid, WrappedObject<TOutput>>();
+                var cachedObjects = new ConcurrentDictionary<long, WrappedObject<TOutput>>();
 
                 var orderedObserver = Observer
                     .Create<WrappedObject<TOutput>>(next =>
                     {
                         var sent = true;
-                        Guid nextId;
+                        long nextId;
 
                         if (_idQueue.TryPeek(out nextId) && nextId == next.Id)
                         {

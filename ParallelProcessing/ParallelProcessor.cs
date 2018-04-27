@@ -22,6 +22,7 @@ namespace ParallelProcessing
         private readonly BlockingCollection<WrappedObject<TOutput>> _availableOutputs;
 
         private volatile bool _isDisposed;
+        private long _id = 0;
 
         public ParallelProcessor(IProcessor<TInput, TOutput> processor) : this(processor, Environment.ProcessorCount) { }
         public ParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlockingAdd) : this(processor, Environment.ProcessorCount, ThreadPriority.Normal, isBlockingAdd) { }
@@ -77,7 +78,7 @@ namespace ParallelProcessing
 
         public void ProcessObject(TInput input)
         {
-            AddInput(new WrappedObject<TInput>(input));
+            AddInput(new WrappedObject<TInput>(input, Interlocked.Increment(ref _id)));
         }
 
         protected virtual void AddInput(WrappedObject<TInput> wrappedObject)
@@ -216,11 +217,10 @@ namespace ParallelProcessing
 
         protected struct WrappedObject<T>
         {
-            public Guid Id { get; }
+            public long Id { get; }
             public T Object { get; }
 
-            public WrappedObject(T input) : this(input, Guid.NewGuid()) { }
-            public WrappedObject(T input, Guid id) : this()
+            public WrappedObject(T input, long id) : this()
             {
                 this.Id = id;
                 this.Object = input;
