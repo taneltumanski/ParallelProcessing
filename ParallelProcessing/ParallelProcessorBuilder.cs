@@ -8,21 +8,21 @@ namespace ParallelProcessing
 {
     public class ParallelProcessorBuilder<TInput, TOutput>
     {
-        private int _processorCount = Environment.ProcessorCount;
+        private int _threadCount = Environment.ProcessorCount;
         private ThreadPriority _threadPriority = ThreadPriority.Normal;
         private bool _isBlocking = false;
         private IProcessor<TInput, TOutput> _processor;
         private bool _isOrdered = false;
         private readonly ICollection<IObserver<TOutput>> _observers = new List<IObserver<TOutput>>();
 
-        public ParallelProcessorBuilder<TInput, TOutput> WithProcessorCount(int processorCount)
+        public ParallelProcessorBuilder<TInput, TOutput> WithThreadCount(int threadCount)
         {
-            if (processorCount < 1)
+            if (threadCount < 1)
             {
-                throw new ArgumentException($"ProcessorCount must be > 0");
+                throw new ArgumentException($"ThreadCount must be > 0");
             }
 
-            _processorCount = processorCount;
+            _threadCount = threadCount;
 
             return this;
         }
@@ -78,11 +78,11 @@ namespace ParallelProcessing
 
             if (_isOrdered)
             {
-                processor = new OrderedParallelProcessor<TInput, TOutput>(_processor, _processorCount, _threadPriority, _isBlocking);
+                processor = new OrderedParallelProcessor<TInput, TOutput>(_processor, _threadCount, _threadPriority, _isBlocking);
             }
             else
             {
-                processor = new ParallelProcessor<TInput, TOutput>(_processor, _processorCount, _threadPriority, _isBlocking);
+                processor = new ParallelProcessor<TInput, TOutput>(_processor, _threadCount, _threadPriority, _isBlocking);
             }
 
             return new BuilderProcessor(processor, _observers);
