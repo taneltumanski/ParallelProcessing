@@ -12,7 +12,7 @@ var observer = Observer.Create<int>(x => Console.WriteLine(x));
 var parallelProcessor = new ParallelProcessorBuilder<string, int>()
     .AsOrdered() // Make sure the output is coming in the same order we added the input
     .WithThreadCount(4) // How many threads we want to create
-    .WithBlockingAdd() // Do we want to wait on add when a thread is available?
+    .WithBlockingAdd() // Do we want to wait for an available thread when all threads are busy?
     .WithThreadPriority(ThreadPriority.Highest)
     .WithProcessor(x => int.Parse(x)) // Function that does the converting or a typed class that does the same
     .ObserveWith(observer) // Observe the processor and get the results
