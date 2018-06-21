@@ -2,13 +2,13 @@
 
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net461</TargetFrameworks>
-    <VersionPrefix>0.2.1</VersionPrefix>
+    <VersionPrefix>0.2.2</VersionPrefix>
   </PropertyGroup>
 
   <PropertyGroup Label="Nuget">
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <Authors>Tanel Tumanski</Authors>
-    <IconUrl>https://github.com/taneltumanski/ParallelProcessing/blob/master/image.png</IconUrl>
+    <IconUrl>https://raw.githubusercontent.com/taneltumanski/ParallelProcessing/master/image.png</IconUrl>
     <Description>Small helper for processing work items on separate threads continuously.</Description>
     <PackageProjectUrl>https://github.com/taneltumanski/ParallelProcessing</PackageProjectUrl>
     <PackageLicenseUrl>https://github.com/taneltumanski/ParallelProcessing/blob/master/LICENSE</PackageLicenseUrl>
