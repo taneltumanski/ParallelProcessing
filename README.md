@@ -7,23 +7,36 @@ We tried using tasks and dedicated threads but they were hard to use and messy s
 ## Usage
 
 ```csharp
-var observer = Observer.Create<int>(x => Console.WriteLine(x));
-
-var parallelProcessor = new ParallelProcessorBuilder<string, int>()
-    .AsOrdered() // Make sure the output is coming in the same order we added the input
-    .WithThreadCount(4) // How many threads we want to create
-    .WithBlockingAdd() // Do we want to wait for an available thread when all threads are busy?
-    .WithThreadPriority(ThreadPriority.Highest)
-    .WithProcessor(x => int.Parse(x)) // Function that does the converting or a typed class that does the same
-    .ObserveWith(observer) // Observe the processor and get the results
-    .Build();
-
-using (parallelProcessor)
+using (var resetEvent = new AutoResetEvent(false))
 {
-    parallelProcessor.ProcessObject("5");
-    parallelProcessor.ProcessObject("10");
-    parallelProcessor.ProcessObject("15");
-    parallelProcessor.ProcessObject("20");
+    var observer = Observer.Create<int>(x =>
+    {
+        Console.WriteLine(x);
+
+        if (x == 20)
+        {
+            resetEvent.Set();
+        }
+    });
+
+    var parallelProcessor = new ParallelProcessorBuilder<string, int>()
+        .AsOrdered() // Make sure the output is coming in the same order we added the input
+        .WithThreadCount(4) // How many threads we want to create
+        .WithBlockingAdd() // Do we want to wait for an available thread when all threads are busy?
+        .WithThreadPriority(ThreadPriority.Highest)
+        .WithProcessor(x => int.Parse(x)) // Function that does the converting or a typed class that does the same
+        .ObserveWith(observer) // Observe the processor and get the results
+        .Build();
+
+    using (parallelProcessor)
+    {
+        parallelProcessor.ProcessObject("5");
+        parallelProcessor.ProcessObject("10");
+        parallelProcessor.ProcessObject("15");
+        parallelProcessor.ProcessObject("20");
+
+        resetEvent.WaitOne();
+    }
 }
 ```
 
