@@ -4,6 +4,7 @@ using System.Reactive;
 using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,12 +12,10 @@ namespace ParallelProcessing
 {
     public class ParallelProcessor<TInput, TOutput> : IParallelProcessor<TInput, TOutput>, IDisposable
     {
-        private readonly ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>> _subscriptions = new ConcurrentDictionary<Guid, IObserver<WrappedObject<TOutput>>>();
+        private readonly Subject<WrappedObject<TOutput>> _subject = new Subject<WrappedObject<TOutput>>();
 
         private readonly Processor[] _processors;
         private readonly Thread _observableThread;
-        private readonly IObserver<WrappedObject<TOutput>> _observer;
-        private readonly IObservable<WrappedObject<TOutput>> _observable;
 
         private readonly BlockingCollection<WrappedObject<TInput>> _availableInputs;
         private readonly BlockingCollection<WrappedObject<TOutput>> _availableOutputs;
@@ -57,17 +56,6 @@ namespace ParallelProcessing
             _observableThread.Priority = threadPriority;
             _observableThread.IsBackground = true;
             _observableThread.Start();
-
-            _observer = CreateObserver();
-
-            _observable = Observable.Create<WrappedObject<TOutput>>(x =>
-            {
-                var id = Guid.NewGuid();
-
-                _subscriptions.TryAdd(id, x);
-
-                return Disposable.Create(() => _subscriptions.TryRemove(id, out var _));
-            });
         }
 
         public IObservable<TOutput> GetObservable()
@@ -86,7 +74,7 @@ namespace ParallelProcessing
         {
             if (_isDisposed || _availableInputs.IsAddingCompleted)
             {
-                throw new ObjectDisposedException(this.GetType().Name);
+                return;
             }
 
             _availableInputs.Add(wrappedObject);
@@ -96,7 +84,7 @@ namespace ParallelProcessing
         {
             if (_isDisposed || _availableOutputs.IsAddingCompleted)
             {
-                throw new ObjectDisposedException(this.GetType().Name);
+                return;
             }
 
             _availableOutputs.Add(wrappedObject);
@@ -104,7 +92,7 @@ namespace ParallelProcessing
 
         protected virtual IObservable<WrappedObject<TOutput>> GetInternalObservable()
         {
-            return _observable;
+            return _subject.AsObservable();
         }
 
         private void ProcessResults()
@@ -118,39 +106,12 @@ namespace ParallelProcessing
                         break;
                     }
 
-                    _observer.OnNext(output);
+                    _subject.OnNext(output);
                 }
             }
 
-            _observer.OnCompleted();
+            _subject.OnCompleted();
         }        
-
-        private IObserver<WrappedObject<TOutput>> CreateObserver()
-        {
-            return Observer
-                .Create<WrappedObject<TOutput>>(
-                x =>
-                {
-                    foreach (var s in _subscriptions)
-                    {
-                        s.Value.OnNext(x);
-                    }
-                },
-                ex =>
-                {
-                    foreach (var s in _subscriptions)
-                    {
-                        s.Value.OnError(ex);
-                    }
-                },
-                () =>
-                {
-                    foreach (var s in _subscriptions)
-                    {
-                        s.Value.OnCompleted();
-                    }
-                });
-        }
 
         public virtual void Dispose()
         {
@@ -231,15 +192,15 @@ namespace ParallelProcessing
             }
         }
 
-        protected struct WrappedObject<T>
+        protected readonly struct WrappedObject<T>
         {
             public long Id { get; }
             public T Object { get; }
 
             public WrappedObject(T input, long id) : this()
             {
-                this.Id = id;
-                this.Object = input;
+                Id = id;
+                Object = input;
             }
         }
     }
