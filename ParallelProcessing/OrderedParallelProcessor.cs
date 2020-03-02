@@ -13,6 +13,9 @@ namespace ParallelProcessing
     public class OrderedParallelProcessor<TInput, TOutput> : ParallelProcessor<TInput, TOutput>
     {
         private readonly ConcurrentQueue<long> _idQueue = new ConcurrentQueue<long>();
+        private readonly ConcurrentDictionary<long, WrappedObject<TOutput>> _cachedObjects = new ConcurrentDictionary<long, WrappedObject<TOutput>>();
+
+        private IObservable<WrappedObject<TOutput>> _observable;
 
         public OrderedParallelProcessor(IProcessor<TInput, TOutput> processor) : base(processor) { }
         public OrderedParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlockingAdd) : base(processor, isBlockingAdd) { }
@@ -29,45 +32,52 @@ namespace ParallelProcessing
 
         protected override IObservable<WrappedObject<TOutput>> GetInternalObservable()
         {
-            return Observable.Create<WrappedObject<TOutput>>(observer =>
-            {
-                var cachedObjects = new ConcurrentDictionary<long, WrappedObject<TOutput>>();
+            return LazyInitializer.EnsureInitialized(ref _observable, CreateObservable);
+        }
 
-                var orderedObserver = Observer
-                    .Create<WrappedObject<TOutput>>(next =>
-                    {
-                        var sent = true;
-                        long nextId;
+        private IObservable<WrappedObject<TOutput>> CreateObservable()
+        {
+            return Observable
+                .Create<WrappedObject<TOutput>>(observer =>
+                {
+                    var orderedObserver = Observer
+                        .Create<WrappedObject<TOutput>>(next =>
+                        {
+                            var sent = true;
+                            long nextId;
 
-                        if (_idQueue.TryPeek(out nextId) && nextId == next.Id)
-                        {
-                            _idQueue.TryDequeue(out var _);
-                            observer.OnNext(next);
-                        }
-                        else
-                        {
-                            cachedObjects.TryAdd(next.Id, next);
-                            sent = false;
-                        }
-
-                        while (sent)
-                        {
-                            if (_idQueue.TryPeek(out nextId) && cachedObjects.TryRemove(nextId, out var result))
+                            if (_idQueue.TryPeek(out nextId) && nextId == next.Id)
                             {
                                 _idQueue.TryDequeue(out var _);
-                                observer.OnNext(result);
+                                observer.OnNext(next);
                             }
                             else
                             {
+                                _cachedObjects.TryAdd(next.Id, next);
                                 sent = false;
                             }
-                        }
-                    }, ex => observer.OnError(ex), () => observer.OnCompleted());
 
-                return base
-                    .GetInternalObservable()
-                    .Subscribe(orderedObserver);
-            });
+                            while (sent)
+                            {
+                                if (_idQueue.TryPeek(out nextId) && _cachedObjects.TryRemove(nextId, out var result))
+                                {
+                                    _idQueue.TryDequeue(out var _);
+                                    observer.OnNext(result);
+                                }
+                                else
+                                {
+                                    sent = false;
+                                }
+                            }
+                        }, ex => observer.OnError(ex), () => observer.OnCompleted());
+
+                    return base
+                        .GetInternalObservable()
+                        .Subscribe(orderedObserver);
+                })
+                .Publish()
+                .RefCount()
+                .AsObservable();
         }
     }
 }
