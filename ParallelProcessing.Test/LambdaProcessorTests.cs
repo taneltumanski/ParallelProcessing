@@ -139,6 +139,49 @@ namespace ParallelProcessing.Test
         }
 
         [TestMethod]
+        public void Processor_Results_Multiple_Subscribers_Succeeds()
+        {
+            using (var processor = new OrderedParallelProcessor<Temp1, Temp2>(new TempProcessor2(), 5))
+            {
+                var list = new ConcurrentQueue<Temp2>();
+                var list2 = new ConcurrentQueue<Temp2>();
+
+                var disposable = processor
+                    .GetObservable()
+                    .Subscribe(x =>
+                    {
+                        list.Enqueue(x);
+                    });
+
+                var disposable2 = processor
+                    .GetObservable()
+                    .Subscribe(x =>
+                    {
+                        list2.Enqueue(x);
+                    });
+
+                using (disposable)
+                using (disposable2)
+                {
+                    var items = new[] { 6, 2, 5, 4, 3, 1 };
+
+                    foreach (var item in items)
+                    {
+                        processor.ProcessObject(new Temp1() { Test1 = item });
+                    }
+
+                    SpinWait.SpinUntil(() => list.Count == items.Length, TimeSpan.FromSeconds(10));
+
+                    Assert.AreEqual(items.Length, list.Count);
+                    Assert.AreEqual(items.Length, list2.Count);
+                    Assert.IsTrue(items.SequenceEqual(list.Select(x => x.Test2)));
+                    Assert.IsTrue(items.SequenceEqual(list2.Select(x => x.Test2)));
+                    Assert.IsTrue(list.Select(x => x.Test2).SequenceEqual(list2.Select(x => x.Test2)));
+                }
+            }
+        }
+
+        [TestMethod]
         public void Processor_Results_Not_Ordered2_WaitOnThread()
         {
             using (var processor = new ParallelProcessor<Temp1, Temp2>(new TempProcessor2(), 5))

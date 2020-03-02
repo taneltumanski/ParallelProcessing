@@ -113,35 +113,40 @@ namespace ParallelProcessing
             _subject.OnCompleted();
         }        
 
-        public virtual void Dispose()
+        public void Dispose()
         {
             if (!_isDisposed)
             {
                 _isDisposed = true;
 
-                if (!_availableInputs.IsAddingCompleted)
-                {
-                    _availableInputs.CompleteAdding();
-                }
-
-                if (!_availableOutputs.IsAddingCompleted)
-                {
-                    _availableOutputs.CompleteAdding();
-                }
-
-                if (_observableThread.IsAlive)
-                {
-                    _observableThread.Join();
-                }
-
-                foreach (var p in _processors)
-                {
-                    p.Dispose();
-                }
-
-                _availableInputs.Dispose();
-                _availableOutputs.Dispose();
+                DisposeImpl();
             }
+        }
+
+        protected virtual void DisposeImpl()
+        {
+            if (!_availableInputs.IsAddingCompleted)
+            {
+                _availableInputs.CompleteAdding();
+            }
+
+            if (!_availableOutputs.IsAddingCompleted)
+            {
+                _availableOutputs.CompleteAdding();
+            }
+
+            if (_observableThread.IsAlive)
+            {
+                _observableThread.Join();
+            }
+
+            foreach (var p in _processors)
+            {
+                p.Dispose();
+            }
+
+            _availableInputs.Dispose();
+            _availableOutputs.Dispose();
         }
 
         protected class Processor : IDisposable
