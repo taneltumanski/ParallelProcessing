@@ -189,7 +189,7 @@ namespace ParallelProcessing.Test
         {
             public Temp2 Process(Temp1 input)
             {
-                Task.Delay(TimeSpan.FromSeconds(input.Test1)).Wait();
+                Thread.Sleep(TimeSpan.FromSeconds(input.Test1));
 
                 return new Temp2()
                 {
