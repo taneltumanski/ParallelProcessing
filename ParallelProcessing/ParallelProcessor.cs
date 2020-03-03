@@ -97,11 +97,11 @@ namespace ParallelProcessing
 
         private void ProcessResults()
         {
-            while (!_isDisposed && !_availableOutputs.IsCompleted)
+            while (!_isDisposed && !_availableOutputs.IsAddingCompleted)
             {
                 if (_availableOutputs.TryTake(out var output, int.MaxValue))
                 {
-                    if (_isDisposed || _availableOutputs.IsCompleted)
+                    if (_isDisposed || _availableOutputs.IsAddingCompleted)
                     {
                         break;
                     }
@@ -145,6 +145,7 @@ namespace ParallelProcessing
                 p.Dispose();
             }
 
+            _subject.Dispose();
             _availableInputs.Dispose();
             _availableOutputs.Dispose();
         }
@@ -173,7 +174,7 @@ namespace ParallelProcessing
 
             private void ProcessLoop()
             {
-                while (!_isDisposed && !_inputs.IsCompleted)
+                while (!_isDisposed && !_inputs.IsAddingCompleted)
                 {
                     if (_inputs.TryTake(out var input, int.MaxValue))
                     {
