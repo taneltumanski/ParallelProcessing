@@ -102,7 +102,7 @@ namespace ParallelProcessing
         {
             while (!_cancellationToken.IsCancellationRequested && !_availableOutputs.IsAddingCompleted)
             {
-                if (_availableOutputs.TryTake(out var output, int.MaxValue, _cts.Token))
+                if (_availableOutputs.TryTake(out var output, TimeSpan.FromSeconds(2)))
                 {
                     if (_cancellationToken.IsCancellationRequested || _availableOutputs.IsAddingCompleted)
                     {
@@ -180,7 +180,7 @@ namespace ParallelProcessing
             {
                 while (!_cancellationToken.IsCancellationRequested && !_inputs.IsAddingCompleted)
                 {
-                    if (_inputs.TryTake(out var input, int.MaxValue, _cancellationToken))
+                    if (_inputs.TryTake(out var input, TimeSpan.FromSeconds(2)))
                     {
                         if (_cancellationToken.IsCancellationRequested)
                         {
