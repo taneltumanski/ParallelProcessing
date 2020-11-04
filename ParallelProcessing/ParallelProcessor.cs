@@ -16,11 +16,12 @@ namespace ParallelProcessing
 
         private readonly Processor[] _processors;
         private readonly Thread _observableThread;
+        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private readonly CancellationToken _cancellationToken;
 
         private readonly BlockingCollection<WrappedObject<TInput>> _availableInputs;
         private readonly BlockingCollection<WrappedObject<TOutput>> _availableOutputs;
 
-        private volatile bool _isDisposed;
         private long _id = 0;
 
         public ParallelProcessor(IProcessor<TInput, TOutput> processor) : this(processor, Environment.ProcessorCount) { }
@@ -49,8 +50,10 @@ namespace ParallelProcessing
 
             for (int i = 0; i < _processors.Length; i++)
             {
-                _processors[i] = new Processor(threadPriority, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
+                _processors[i] = new Processor(threadPriority, _cts.Token, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
             }
+
+            _cancellationToken = _cts.Token;
 
             _observableThread = new Thread(ProcessResults);
             _observableThread.Priority = threadPriority;
@@ -72,7 +75,7 @@ namespace ParallelProcessing
 
         protected virtual void AddInput(WrappedObject<TInput> wrappedObject)
         {
-            if (_isDisposed || _availableInputs.IsAddingCompleted)
+            if (_cancellationToken.IsCancellationRequested || _availableInputs.IsAddingCompleted)
             {
                 return;
             }
@@ -82,7 +85,7 @@ namespace ParallelProcessing
 
         protected virtual void AddOutput(WrappedObject<TOutput> wrappedObject)
         {
-            if (_isDisposed || _availableOutputs.IsAddingCompleted)
+            if (_cancellationToken.IsCancellationRequested || _availableOutputs.IsAddingCompleted)
             {
                 return;
             }
@@ -97,11 +100,11 @@ namespace ParallelProcessing
 
         private void ProcessResults()
         {
-            while (!_isDisposed && !_availableOutputs.IsCompleted)
+            while (!_cancellationToken.IsCancellationRequested && !_availableOutputs.IsCompleted)
             {
-                if (_availableOutputs.TryTake(out var output, int.MaxValue))
+                if (_availableOutputs.TryTake(out var output, int.MaxValue, _cts.Token))
                 {
-                    if (_isDisposed || _availableOutputs.IsCompleted)
+                    if (_cancellationToken.IsCancellationRequested || _availableOutputs.IsCompleted)
                     {
                         break;
                     }
@@ -115,16 +118,16 @@ namespace ParallelProcessing
 
         public void Dispose()
         {
-            if (!_isDisposed)
+            if (!_cancellationToken.IsCancellationRequested)
             {
-                _isDisposed = true;
-
                 DisposeImpl();
             }
         }
 
         protected virtual void DisposeImpl()
         {
+            _cts.Cancel();
+
             if (!_availableInputs.IsAddingCompleted)
             {
                 _availableInputs.CompleteAdding();
@@ -147,19 +150,20 @@ namespace ParallelProcessing
 
             _availableInputs.Dispose();
             _availableOutputs.Dispose();
+            _cts.Dispose();
         }
 
         protected class Processor : IDisposable
         {
-            private volatile bool _isDisposed;
-
             private readonly Thread _thread;
+            private readonly CancellationToken _cancellationToken;
             private readonly IProcessor<TInput, TOutput> _processor;
             private readonly BlockingCollection<WrappedObject<TInput>> _inputs;
             private readonly Action<WrappedObject<TOutput>> _addOutputAction;
 
-            public Processor(ThreadPriority priority, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, Action<WrappedObject<TOutput>> addOutputAction)
+            public Processor(ThreadPriority priority, CancellationToken cancellationToken, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, Action<WrappedObject<TOutput>> addOutputAction)
             {
+                _cancellationToken = cancellationToken;
                 _processor = processor;
                 _inputs = inputs;
                 _addOutputAction = addOutputAction;
@@ -173,13 +177,18 @@ namespace ParallelProcessing
 
             private void ProcessLoop()
             {
-                while (!_isDisposed && !_inputs.IsCompleted)
+                while (!_cancellationToken.IsCancellationRequested && !_inputs.IsCompleted)
                 {
-                    if (_inputs.TryTake(out var input, int.MaxValue))
+                    if (_inputs.TryTake(out var input, int.MaxValue, _cancellationToken))
                     {
+                        if (_cancellationToken.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
                         var result = _processor.Process(input.Object);
 
-                        if (_isDisposed)
+                        if (_cancellationToken.IsCancellationRequested)
                         {
                             break;
                         }
@@ -191,9 +200,7 @@ namespace ParallelProcessing
 
             public void Dispose()
             {
-                _isDisposed = true;
-
-                _thread.Join();
+                _thread.Join(TimeSpan.FromSeconds(2));
             }
         }
 
