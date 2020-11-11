@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Reactive;
 using System.Reactive.Concurrency;
 using System.Reactive.Disposables;
@@ -12,23 +13,21 @@ namespace ParallelProcessing
 {
     public class ParallelProcessor<TInput, TOutput> : IParallelProcessor<TInput, TOutput>, IDisposable
     {
-        private readonly Subject<WrappedObject<TOutput>> _subject = new Subject<WrappedObject<TOutput>>();
-
         private readonly Processor[] _processors;
         private readonly Thread _observableThread;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly CancellationToken _cancellationToken;
 
-        private readonly BlockingCollection<WrappedObject<TInput>> _availableInputs;
-        private readonly BlockingCollection<WrappedObject<TOutput>> _availableOutputs;
+        private readonly ConcurrentQueue<long> _idQueue = new ConcurrentQueue<long>();
+        private readonly ConcurrentDictionary<long, WrappedOutput> _cachedObjects = new ConcurrentDictionary<long, WrappedOutput>();
 
+        private readonly BlockingCollection<WrappedInput> _availableInputs;
+        private readonly BlockingCollection<WrappedOutput> _availableOutputs;
+        private readonly bool _asOrdered;
         private long _id = 0;
 
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor) : this(processor, Environment.ProcessorCount) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, bool isBlocking) : this(processor, Environment.ProcessorCount, ThreadPriority.Normal, isBlocking) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, ThreadPriority threadPriority) : this(processor, Environment.ProcessorCount, threadPriority, false) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlocking)
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false, false) { }
+        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
         {
             if (processor == null)
             {
@@ -37,23 +36,23 @@ namespace ParallelProcessing
 
             if (isBlocking)
             {
-                _availableInputs = new BlockingCollection<WrappedObject<TInput>>(threadCount);
-                _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>(threadCount);
+                _availableInputs = new BlockingCollection<WrappedInput>(threadCount);
+                _availableOutputs = new BlockingCollection<WrappedOutput>(threadCount);
             }
             else
             {
-                _availableInputs = new BlockingCollection<WrappedObject<TInput>>();
-                _availableOutputs = new BlockingCollection<WrappedObject<TOutput>>();
+                _availableInputs = new BlockingCollection<WrappedInput>();
+                _availableOutputs = new BlockingCollection<WrappedOutput>();
             }
-            
+
+            _asOrdered = asOrdered;
+            _cancellationToken = _cts.Token;
             _processors = new Processor[threadCount];
 
             for (int i = 0; i < _processors.Length; i++)
             {
-                _processors[i] = new Processor(threadPriority, _cts.Token, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
+                _processors[i] = new Processor(threadPriority, _cancellationToken, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
             }
-
-            _cancellationToken = _cts.Token;
 
             _observableThread = new Thread(ProcessResults);
             _observableThread.Priority = threadPriority;
@@ -61,60 +60,97 @@ namespace ParallelProcessing
             _observableThread.Start();
         }
 
-        public IObservable<TOutput> GetObservable()
+        public void ProcessObject(TInput input, Action<TInput, TOutput, Exception> callback)
         {
-            return GetInternalObservable()
-                .Select(x => x.Object)
-                .AsObservable();
+            AddInput(new WrappedInput(input, Interlocked.Increment(ref _id), callback));
         }
 
-        public void ProcessObject(TInput input)
+        public void Stop()
         {
-            AddInput(new WrappedObject<TInput>(input, Interlocked.Increment(ref _id)));
+            _availableInputs.CompleteAdding();
         }
 
-        protected virtual void AddInput(WrappedObject<TInput> wrappedObject)
+        public bool WaitForCompletion(TimeSpan timeout)
         {
-            if (_cancellationToken.IsCancellationRequested || _availableInputs.IsAddingCompleted)
+            return SpinWait.SpinUntil(() => _availableInputs.IsCompleted && _availableOutputs.IsCompleted, timeout);
+        }
+
+        protected virtual void AddInput(WrappedInput wrappedObject)
+        {
+            if (_asOrdered)
             {
-                return;
+                _idQueue.Enqueue(wrappedObject.Id);
             }
 
             _availableInputs.Add(wrappedObject);
         }
 
-        protected virtual void AddOutput(WrappedObject<TOutput> wrappedObject)
+        protected virtual void AddOutput(WrappedOutput wrappedObject)
         {
-            if (_cancellationToken.IsCancellationRequested || _availableOutputs.IsAddingCompleted)
-            {
-                return;
-            }
-
             _availableOutputs.Add(wrappedObject);
-        }
-
-        protected virtual IObservable<WrappedObject<TOutput>> GetInternalObservable()
-        {
-            return _subject.AsObservable();
         }
 
         private void ProcessResults()
         {
-            while (!_cancellationToken.IsCancellationRequested && !_availableOutputs.IsCompleted)
+            try
             {
-                if (_availableOutputs.TryTake(out var output, int.MaxValue, _cts.Token))
+                while (!_cancellationToken.IsCancellationRequested)
                 {
-                    if (_cancellationToken.IsCancellationRequested || _availableOutputs.IsCompleted)
+                    if (_availableOutputs.TryTake(out var output, 100, _cancellationToken))
                     {
-                        break;
+                        var sent = true;
+
+                        if (_asOrdered)
+                        {
+                            if (_idQueue.TryPeek(out var nextId) && nextId == output.InputRequest.Id)
+                            {
+                                _idQueue.TryDequeue(out var _);
+
+                                OnOutput(output);
+                            }
+                            else
+                            {
+                                _cachedObjects.TryAdd(output.InputRequest.Id, output);
+                                sent = false;
+                            }
+
+                            while (sent)
+                            {
+                                if (_idQueue.TryPeek(out nextId) && _cachedObjects.TryRemove(nextId, out var result))
+                                {
+                                    _idQueue.TryDequeue(out var _);
+
+                                    OnOutput(result);
+                                }
+                                else
+                                {
+                                    sent = false;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            OnOutput(output);
+                        }
                     }
 
-                    _subject.OnNext(output);
+                    if (!_availableOutputs.IsAddingCompleted && _availableInputs.IsCompleted && _processors.All(x => x.IsCompleted))
+                    {
+                        _availableOutputs.CompleteAdding();
+                    }
                 }
             }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                _availableOutputs.CompleteAdding();
+            }
+        }
 
-            _subject.OnCompleted();
-        }        
+        protected virtual void OnOutput(WrappedOutput output)
+        {
+            output.InputRequest.Callback?.Invoke(output.InputRequest.InputObject, output.OutputObject, output.Exception);
+        }
 
         public void Dispose()
         {
@@ -126,17 +162,10 @@ namespace ParallelProcessing
 
         protected virtual void DisposeImpl()
         {
+            Stop();
+            WaitForCompletion(TimeSpan.FromSeconds(2));
+
             _cts.Cancel();
-
-            if (!_availableInputs.IsAddingCompleted)
-            {
-                _availableInputs.CompleteAdding();
-            }
-
-            if (!_availableOutputs.IsAddingCompleted)
-            {
-                _availableOutputs.CompleteAdding();
-            }
 
             if (_observableThread.IsAlive)
             {
@@ -158,10 +187,12 @@ namespace ParallelProcessing
             private readonly Thread _thread;
             private readonly CancellationToken _cancellationToken;
             private readonly IProcessor<TInput, TOutput> _processor;
-            private readonly BlockingCollection<WrappedObject<TInput>> _inputs;
-            private readonly Action<WrappedObject<TOutput>> _addOutputAction;
+            private readonly BlockingCollection<WrappedInput> _inputs;
+            private readonly Action<WrappedOutput> _addOutputAction;
 
-            public Processor(ThreadPriority priority, CancellationToken cancellationToken, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedObject<TInput>> inputs, Action<WrappedObject<TOutput>> addOutputAction)
+            public bool IsCompleted { get; private set; }
+
+            public Processor(ThreadPriority priority, CancellationToken cancellationToken, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedInput> inputs, Action<WrappedOutput> addOutputAction)
             {
                 _cancellationToken = cancellationToken;
                 _processor = processor;
@@ -177,42 +208,66 @@ namespace ParallelProcessing
 
             private void ProcessLoop()
             {
-                while (!_cancellationToken.IsCancellationRequested && !_inputs.IsCompleted)
+                try
                 {
-                    if (_inputs.TryTake(out var input, int.MaxValue, _cancellationToken))
+                    while (!_inputs.IsCompleted && !_cancellationToken.IsCancellationRequested)
                     {
-                        if (_cancellationToken.IsCancellationRequested)
+                        if (_inputs.TryTake(out var input, 100, _cancellationToken))
                         {
-                            return;
+                            try
+                            {
+                                var result = _processor.Process(input.InputObject);
+
+                                _addOutputAction(new WrappedOutput(input, result, default));
+                            }
+                            catch (Exception e)
+                            {
+                                _addOutputAction(new WrappedOutput(input, default, e));
+                            }
                         }
-
-                        var result = _processor.Process(input.Object);
-
-                        if (_cancellationToken.IsCancellationRequested)
-                        {
-                            break;
-                        }
-
-                        _addOutputAction(new WrappedObject<TOutput>(result, input.Id));
                     }
+                }
+                catch (OperationCanceledException) { }
+                finally
+                {
+                    IsCompleted = true;
                 }
             }
 
             public void Dispose()
             {
-                _thread.Join(TimeSpan.FromSeconds(2));
+                if (_thread.IsAlive)
+                {
+                    _thread.Join(TimeSpan.FromSeconds(2));
+                }
             }
         }
 
-        protected readonly struct WrappedObject<T>
+        protected class WrappedInput
         {
-            public long Id { get; }
-            public T Object { get; }
+            public readonly long Id;
+            public readonly Action<TInput, TOutput, Exception> Callback;
+            public readonly TInput InputObject;
 
-            public WrappedObject(T input, long id) : this()
+            public WrappedInput(TInput input, long id, Action<TInput, TOutput, Exception> callback)
             {
                 Id = id;
-                Object = input;
+                Callback = callback;
+                InputObject = input;
+            }
+        }
+
+        protected class WrappedOutput
+        {
+            public readonly WrappedInput InputRequest;
+            public readonly Exception Exception;
+            public readonly TOutput OutputObject;
+
+            public WrappedOutput(WrappedInput input, TOutput output, Exception exception)
+            {
+                InputRequest = input;
+                Exception = exception;
+                OutputObject = output;
             }
         }
     }
