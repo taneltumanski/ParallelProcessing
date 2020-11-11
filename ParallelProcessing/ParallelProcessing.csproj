@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net461</TargetFrameworks>
-    <VersionPrefix>0.2.8</VersionPrefix>
+    <VersionPrefix>0.3.1</VersionPrefix>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 

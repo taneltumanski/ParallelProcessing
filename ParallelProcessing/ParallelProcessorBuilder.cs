@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reactive.Disposables;
+using System.Reactive.Subjects;
 using System.Text;
 using System.Threading;
 
@@ -13,7 +15,7 @@ namespace ParallelProcessing
         private bool _isBlocking = false;
         private IProcessor<TInput, TOutput> _processor;
         private bool _isOrdered = false;
-        private readonly ICollection<IObserver<TOutput>> _observers = new List<IObserver<TOutput>>();
+        private readonly ICollection<IObserver<ProcessResult<TOutput>>> _observers = new List<IObserver<ProcessResult<TOutput>>>();
 
         public ParallelProcessorBuilder<TInput, TOutput> WithThreadCount(int threadCount)
         {
@@ -65,7 +67,7 @@ namespace ParallelProcessing
             return this;
         }
 
-        public ParallelProcessorBuilder<TInput, TOutput> ObserveWith(IObserver<TOutput> observer)
+        public ParallelProcessorBuilder<TInput, TOutput> ObserveWith(IObserver<ProcessResult<TOutput>> observer)
         {
             _observers.Add(observer);
 
@@ -74,55 +76,14 @@ namespace ParallelProcessing
 
         public IParallelProcessor<TInput, TOutput> Build()
         {
-            IParallelProcessor<TInput, TOutput> processor;
+            var processor = new ParallelProcessor<TInput, TOutput>(_processor, _threadCount, _threadPriority, _isBlocking, _isOrdered);
 
-            if (_isOrdered)
+            if (_observers.Any())
             {
-                processor = new OrderedParallelProcessor<TInput, TOutput>(_processor, _threadCount, _threadPriority, _isBlocking);
-            }
-            else
-            {
-                processor = new ParallelProcessor<TInput, TOutput>(_processor, _threadCount, _threadPriority, _isBlocking);
+                return new ObservableProcessor<TInput, TOutput>(processor, _observers, true);
             }
 
-            return new BuilderProcessor(processor, _observers);
-        }
-
-        private class BuilderProcessor : IParallelProcessor<TInput, TOutput>
-        {
-            private readonly IParallelProcessor<TInput, TOutput> _processor;
-            private readonly IEnumerable<IDisposable> _disposables;
-
-            public BuilderProcessor(IParallelProcessor<TInput, TOutput> processor, IEnumerable<IObserver<TOutput>> observers)
-            {
-                _processor = processor;
-
-                var observable = _processor.GetObservable();
-
-                _disposables = observers
-                    .Select(x => observable.Subscribe(x))
-                    .ToArray();
-            }
-
-            public IObservable<TOutput> GetObservable()
-            {
-                return _processor.GetObservable();
-            }
-
-            public void ProcessObject(TInput input)
-            {
-                _processor.ProcessObject(input);
-            }
-
-            public void Dispose()
-            {
-                foreach (var d in _disposables)
-                {
-                    d.Dispose();
-                }
-
-                _processor.Dispose();
-            }
+            return processor;
         }
     }
 }
