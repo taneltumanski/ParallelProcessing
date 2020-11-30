@@ -12,21 +12,26 @@ namespace ParallelProcessing
 {
     public static class ParallelProcessorExtensions
     {
-        public static ParallelProcessorBuilder<TIn, TOut> ObserveWith<TIn, TOut>(this ParallelProcessorBuilder<TIn, TOut> builder, Action<ProcessResult<TOut>> action)
+        public static void ProcessObject<TIn, TOut>(this IParallelProcessor parallelProcessor, TIn input, IProcessor<TIn, TOut> processor, Action<TIn, TOut, Exception> callback)
+        {
+            parallelProcessor.ProcessObject(input, x => processor.Process(x), callback);
+        }
+
+        public static ParallelProcessorBuilder ObserveWith<TIn, TOut>(this ParallelProcessorBuilder builder, Action<ProcessResult<TOut>> action)
         {
             return builder.ObserveWith(Observer.Create(action));
         }
 
-        public static UpdatableParallelProcessor<TIn, TOut> AsUpdatable<TIn, TOut>(this IParallelProcessor<TIn, TOut> processor)
+        public static UpdatableParallelProcessor AsUpdatable(this IParallelProcessor processor)
         {
-            return new UpdatableParallelProcessor<TIn, TOut>(processor);
+            return new UpdatableParallelProcessor(processor);
         }
 
-        public static Task<TOut> Process<TIn, TOut>(this IParallelProcessor<TIn, TOut> processor, TIn input)
+        public static Task<TOut> Process<TIn, TOut>(this IParallelProcessor parallelProcessor, TIn input, Func<TIn, TOut> processor)
         {
             var tcs = new TaskCompletionSource<TOut>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            processor.ProcessObject(input, (_, o, ex) =>
+            parallelProcessor.ProcessObject(input, processor, (_, o, ex) =>
             {
                 if (ex != null)
                 {
@@ -41,52 +46,56 @@ namespace ParallelProcessing
             return tcs.Task;
         }
 
-        public static IObservable<ProcessResult<TOut>> AsObservable<TIn, TOut>(this IParallelProcessor<TIn, TOut> processor)
+        public static IObservable<ProcessResult<TOut>> AsObservable<TIn, TOut>(this IParallelProcessor processor)
         {
-            return AsObservable(processor, false);
+            return AsObservable<TIn, TOut>(processor, false);
         }
 
-        public static IObservable<ProcessResult<TOut>> AsObservable<TIn, TOut>(this IParallelProcessor<TIn, TOut> processor, bool disposeProcessor)
+        public static IObservable<ProcessResult<TOut>> AsObservable<TIn, TOut>(this IParallelProcessor processor, bool disposeProcessor)
         {
             return Observable
-                .Using(() => new ObservableProcessor<TIn, TOut>(processor, Enumerable.Empty<IObserver<ProcessResult<TOut>>>(), disposeProcessor), x => x.GetObservable())
+                .Using(() => new ObservableProcessor(processor, Enumerable.Empty<IObserver<ProcessResult<object>>>(), disposeProcessor), x => x.GetObservable<TOut>())
                 .Publish()
                 .RefCount()
                 .AsObservable();
         }
     }
 
-    public class ObservableProcessor<TIn, TOut> : IParallelProcessor<TIn, TOut>
+    public class ObservableProcessor : IParallelProcessor
     {
-        private readonly IParallelProcessor<TIn, TOut> _processor;
+        private readonly IParallelProcessor _processor;
         private readonly IDisposable _subscriptions;
         private readonly bool _disposeProcessor;
-        private readonly Subject<ProcessResult<TOut>> _subject = new Subject<ProcessResult<TOut>>();
+        private readonly Subject<ProcessResult<object>> _subject = new Subject<ProcessResult<object>>();
 
-        public ObservableProcessor(IParallelProcessor<TIn, TOut> processor, IEnumerable<IObserver<ProcessResult<TOut>>> observers, bool disposeProcessor)
+        public ObservableProcessor(IParallelProcessor processor, IEnumerable<IObserver<ProcessResult<object>>> observers, bool disposeProcessor)
         {
             _processor = processor;
             _disposeProcessor = disposeProcessor;
             _subscriptions = new CompositeDisposable(observers.Select(x => _subject.Subscribe(x)).ToArray());
         }
 
-        public void ProcessObject(TIn input, Action<TIn, TOut, Exception> callback)
+        public void ProcessObject<TInput, TOutput>(TInput input, Func<TInput, TOutput> processor, Action<TInput, TOutput, Exception> callback)
         {
-            var actualCallback = new Action<TIn, TOut, Exception>((i, o, ex) =>
+            var actualCallback = new Action<TInput, TOutput, Exception>((i, o, ex) =>
             {
                 callback?.Invoke(i, o, ex);
 
-                var result = ex == null ? new ProcessResult<TOut>(o) : new ProcessResult<TOut>(ex);
+                var result = ex == null ? new ProcessResult<object>(o) : new ProcessResult<object>(ex);
 
                 _subject.OnNext(result);
             });
 
-            _processor.ProcessObject(input, actualCallback);
+            _processor.ProcessObject(input, processor, actualCallback);
         }
 
-        public IObservable<ProcessResult<TOut>> GetObservable()
+        public IObservable<ProcessResult<TOut>> GetObservable<TOut>()
         {
-            return _subject.AsObservable();
+            return _subject
+                .Select(x => x.TryGetResult(out var res) ? res : null)
+                .Where(x => x is TOut)
+                .Select(x => new ProcessResult<TOut>((TOut)x))
+                .AsObservable();
         }
 
         public void Stop()

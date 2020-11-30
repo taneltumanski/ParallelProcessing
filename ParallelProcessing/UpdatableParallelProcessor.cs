@@ -5,17 +5,17 @@ using System.Threading;
 
 namespace ParallelProcessing
 {
-    public class UpdatableParallelProcessor<TInput, TOutput> : IParallelProcessor<TInput, TOutput>
+    public class UpdatableParallelProcessor : IParallelProcessor
     {
-        private IParallelProcessor<TInput, TOutput> _processor;
+        private IParallelProcessor _processor;
         private readonly object _lock = new object();
 
-        public UpdatableParallelProcessor(IParallelProcessor<TInput, TOutput> processor)
+        public UpdatableParallelProcessor(IParallelProcessor processor)
         {
             _processor = processor;
         }
 
-        public void ProcessObject(TInput input, Action<TInput, TOutput, Exception> callback)
+        public void ProcessObject<TInput, TOutput>(TInput input, Func<TInput, TOutput> processor, Action<TInput, TOutput, Exception> callback)
         {
             int tryCount = 0;
 
@@ -24,7 +24,7 @@ namespace ParallelProcessing
             {
                 try
                 {
-                    _processor.ProcessObject(input, callback);
+                    _processor.ProcessObject<TInput, TOutput>(input, processor, callback);
 
                     return;
                 }
@@ -34,8 +34,6 @@ namespace ParallelProcessing
                     {
                         throw;
                     }
-
-                    Console.WriteLine("RETRY");
                 }
             }
         }
@@ -50,7 +48,7 @@ namespace ParallelProcessing
             return _processor.WaitForCompletion(timeout);
         }
 
-        public void UpdateProcessor(IParallelProcessor<TInput, TOutput> newProcessor)
+        public void UpdateProcessor(IParallelProcessor newProcessor)
         {
             var oldProcessor = Interlocked.Exchange(ref _processor, newProcessor);
 
