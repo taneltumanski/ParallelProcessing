@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace ParallelProcessing
 {
-    public class ParallelProcessor<TInput, TOutput> : IParallelProcessor<TInput, TOutput>, IDisposable
+    public class ParallelProcessor : IParallelProcessor, IDisposable
     {
         private readonly Processor[] _processors;
         private readonly Thread _observableThread;
@@ -26,14 +26,9 @@ namespace ParallelProcessing
         private readonly bool _asOrdered;
         private long _id = 0;
 
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount) : this(processor, threadCount, ThreadPriority.Normal, false, false) { }
-        public ParallelProcessor(IProcessor<TInput, TOutput> processor, int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
+        public ParallelProcessor(int threadCount) : this(threadCount, ThreadPriority.Normal, false, false) { }
+        public ParallelProcessor(int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
         {
-            if (processor == null)
-            {
-                throw new ArgumentNullException(nameof(processor));
-            }
-
             if (isBlocking)
             {
                 _availableInputs = new BlockingCollection<WrappedInput>(threadCount);
@@ -51,7 +46,7 @@ namespace ParallelProcessing
 
             for (int i = 0; i < _processors.Length; i++)
             {
-                _processors[i] = new Processor(threadPriority, _cancellationToken, $"{typeof(ParallelProcessor<TInput, TOutput>)}[{i}]", processor, _availableInputs, AddOutput);
+                _processors[i] = new Processor(threadPriority, _cancellationToken, $"{typeof(ParallelProcessor)}[{i}]", _availableInputs, AddOutput);
             }
 
             _observableThread = new Thread(ProcessResults);
@@ -60,9 +55,9 @@ namespace ParallelProcessing
             _observableThread.Start();
         }
 
-        public void ProcessObject(TInput input, Action<TInput, TOutput, Exception> callback)
+        public void ProcessObject<TInput, TOutput>(TInput input, Func<TInput, TOutput> processor, Action<TInput, TOutput, Exception> callback)
         {
-            AddInput(new WrappedInput(input, Interlocked.Increment(ref _id), callback));
+            AddInput(new WrappedInput(input, Interlocked.Increment(ref _id), i => processor((TInput)i), (i, o, ex) => callback((TInput)i, (TOutput)o, ex)));
         }
 
         public void Stop()
@@ -186,16 +181,14 @@ namespace ParallelProcessing
         {
             private readonly Thread _thread;
             private readonly CancellationToken _cancellationToken;
-            private readonly IProcessor<TInput, TOutput> _processor;
             private readonly BlockingCollection<WrappedInput> _inputs;
             private readonly Action<WrappedOutput> _addOutputAction;
 
             public bool IsCompleted { get; private set; }
 
-            public Processor(ThreadPriority priority, CancellationToken cancellationToken, string name, IProcessor<TInput, TOutput> processor, BlockingCollection<WrappedInput> inputs, Action<WrappedOutput> addOutputAction)
+            public Processor(ThreadPriority priority, CancellationToken cancellationToken, string name, BlockingCollection<WrappedInput> inputs, Action<WrappedOutput> addOutputAction)
             {
                 _cancellationToken = cancellationToken;
-                _processor = processor;
                 _inputs = inputs;
                 _addOutputAction = addOutputAction;
 
@@ -216,7 +209,7 @@ namespace ParallelProcessing
                         {
                             try
                             {
-                                var result = _processor.Process(input.InputObject);
+                                var result = input.Processor(input.InputObject);
 
                                 _addOutputAction(new WrappedOutput(input, result, default));
                             }
@@ -246,12 +239,14 @@ namespace ParallelProcessing
         protected class WrappedInput
         {
             public readonly long Id;
-            public readonly Action<TInput, TOutput, Exception> Callback;
-            public readonly TInput InputObject;
+            public readonly Action<object, object, Exception> Callback;
+            public readonly object InputObject;
+            public readonly Func<object, object> Processor;
 
-            public WrappedInput(TInput input, long id, Action<TInput, TOutput, Exception> callback)
+            public WrappedInput(object input, long id, Func<object, object> processor, Action<object, object, Exception> callback)
             {
                 Id = id;
+                Processor = processor;
                 Callback = callback;
                 InputObject = input;
             }
@@ -261,9 +256,9 @@ namespace ParallelProcessing
         {
             public readonly WrappedInput InputRequest;
             public readonly Exception Exception;
-            public readonly TOutput OutputObject;
+            public readonly object OutputObject;
 
-            public WrappedOutput(WrappedInput input, TOutput output, Exception exception)
+            public WrappedOutput(WrappedInput input, object output, Exception exception)
             {
                 InputRequest = input;
                 Exception = exception;

@@ -2,9 +2,9 @@
 
 namespace ParallelProcessing
 {
-    public interface IParallelProcessor<TInput, TOutput> : IDisposable
+    public interface IParallelProcessor : IDisposable
     {
-        void ProcessObject(TInput input, Action<TInput, TOutput, Exception> callback);
+        void ProcessObject<TInput, TOutput>(TInput input, Func<TInput, TOutput> processor, Action<TInput, TOutput, Exception> callback);
         void Stop();
         bool WaitForCompletion(TimeSpan timeout);
     }
