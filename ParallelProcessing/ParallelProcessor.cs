@@ -89,7 +89,7 @@ namespace ParallelProcessing
         {
             try
             {
-                while (!_cancellationToken.IsCancellationRequested)
+                while (!_cancellationToken.IsCancellationRequested && !_availableOutputs.IsCompleted)
                 {
                     if (_availableOutputs.TryTake(out var output, 100, _cancellationToken))
                     {
@@ -129,7 +129,7 @@ namespace ParallelProcessing
                         }
                     }
 
-                    if (!_availableOutputs.IsAddingCompleted && _availableInputs.IsCompleted && _processors.All(x => x.IsCompleted))
+                    if (_availableInputs.IsCompleted && _processors.All(x => x.IsCompleted))
                     {
                         _availableOutputs.CompleteAdding();
                     }
@@ -162,22 +162,12 @@ namespace ParallelProcessing
 
             _cts.Cancel();
 
-            if (_observableThread.IsAlive)
-            {
-                _observableThread.Join();
-            }
-
-            foreach (var p in _processors)
-            {
-                p.Dispose();
-            }
-
             _availableInputs.Dispose();
             _availableOutputs.Dispose();
             _cts.Dispose();
         }
 
-        protected class Processor : IDisposable
+        protected class Processor
         {
             private readonly Thread _thread;
             private readonly CancellationToken _cancellationToken;
@@ -224,14 +214,6 @@ namespace ParallelProcessing
                 finally
                 {
                     IsCompleted = true;
-                }
-            }
-
-            public void Dispose()
-            {
-                if (_thread.IsAlive)
-                {
-                    _thread.Join(TimeSpan.FromSeconds(2));
                 }
             }
         }
