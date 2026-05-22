@@ -26,6 +26,9 @@ namespace ParallelProcessing
         private readonly bool _asOrdered;
         private long _id = 0;
 
+        private bool _isOutputCompleted = false;
+        private bool _isInputCompleted = false;
+
         public ParallelProcessor(int threadCount) : this(string.Empty, threadCount, ThreadPriority.Normal, false, false) { }
         public ParallelProcessor(string name, int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
         {
@@ -68,7 +71,7 @@ namespace ParallelProcessing
 
         public bool WaitForCompletion(TimeSpan timeout)
         {
-            return SpinWait.SpinUntil(() => _availableInputs.IsCompleted && _availableOutputs.IsCompleted, timeout);
+            return SpinWait.SpinUntil(() => _isInputCompleted && _isOutputCompleted, timeout);
         }
 
         protected virtual void AddInput(WrappedInput wrappedObject)
@@ -130,8 +133,9 @@ namespace ParallelProcessing
                         }
                     }
 
-                    if (_availableInputs.IsCompleted && _processors.All(x => x.IsCompleted))
+                    if (_processors.All(x => x.IsCompleted))
                     {
+                        _isInputCompleted = true;
                         _availableOutputs.CompleteAdding();
                     }
                 }
@@ -139,7 +143,9 @@ namespace ParallelProcessing
             catch (OperationCanceledException) { }
             finally
             {
-                _availableOutputs.CompleteAdding();
+                _isOutputCompleted = true;
+                _availableOutputs.Dispose();
+                _availableInputs.Dispose();
             }
         }
 
@@ -162,9 +168,6 @@ namespace ParallelProcessing
             WaitForCompletion(TimeSpan.FromSeconds(2));
 
             _cts.Cancel();
-
-            _availableInputs.Dispose();
-            _availableOutputs.Dispose();
             _cts.Dispose();
         }
 
