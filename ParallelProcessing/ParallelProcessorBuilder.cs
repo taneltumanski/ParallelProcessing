@@ -15,6 +15,7 @@ namespace ParallelProcessing
         private ThreadPriority _threadPriority = ThreadPriority.Normal;
         private bool _isBlocking = false;
         private bool _isOrdered = false;
+        private string _name;
 
         private readonly ICollection<IObserver<ProcessResult<object>>> _observers = new List<IObserver<ProcessResult<object>>>();
 
@@ -56,6 +57,13 @@ namespace ParallelProcessing
             return this;
         }
 
+        public ParallelProcessorBuilder WithName(string name)
+        {
+            _name = name;
+
+            return this;
+        }
+
         public ParallelProcessorBuilder ObserveWith<TOutput>(IObserver<ProcessResult<TOutput>> observer)
         {
             _observers.Add(Observer.Create<ProcessResult<object>>(x =>
@@ -77,7 +85,7 @@ namespace ParallelProcessing
 
         public IParallelProcessor Build()
         {
-            var processor = new ParallelProcessor(_threadCount, _threadPriority, _isBlocking, _isOrdered);
+            var processor = new ParallelProcessor(_name, _threadCount, _threadPriority, _isBlocking, _isOrdered);
 
             if (_observers.Any())
             {

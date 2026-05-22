@@ -89,7 +89,7 @@ namespace ParallelProcessing.Test
         public void Processor_Results_Ordered()
         {
             using (AssertTimer(TimeSpan.FromSeconds(1)))
-            using (var processor = new ParallelProcessor(5, ThreadPriority.Normal, false, true))
+            using (var processor = new ParallelProcessor(string.Empty, 5, ThreadPriority.Normal, false, true))
             {
                 var list = new ConcurrentQueue<Temp2>();
                 var random = new Random();
@@ -114,7 +114,7 @@ namespace ParallelProcessing.Test
         public void Processor_Results_Ordered2_WaitOnThread()
         {
             using (AssertTimer(TimeSpan.FromSeconds(1)))
-            using (var processor = new ParallelProcessor(5, ThreadPriority.Normal, false, true))
+            using (var processor = new ParallelProcessor(string.Empty, 5, ThreadPriority.Normal, false, true))
             {
                 var list = new ConcurrentQueue<Temp2>();
                 var random = new Random();

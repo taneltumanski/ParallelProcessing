@@ -26,8 +26,8 @@ namespace ParallelProcessing
         private readonly bool _asOrdered;
         private long _id = 0;
 
-        public ParallelProcessor(int threadCount) : this(threadCount, ThreadPriority.Normal, false, false) { }
-        public ParallelProcessor(int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
+        public ParallelProcessor(int threadCount) : this(string.Empty, threadCount, ThreadPriority.Normal, false, false) { }
+        public ParallelProcessor(string name, int threadCount, ThreadPriority threadPriority, bool isBlocking, bool asOrdered)
         {
             if (isBlocking)
             {
@@ -52,6 +52,7 @@ namespace ParallelProcessing
             _observableThread = new Thread(ProcessResults);
             _observableThread.Priority = threadPriority;
             _observableThread.IsBackground = true;
+            _observableThread.Name = $"ParallelProcessor_Main{(!string.IsNullOrEmpty(name) ? "_" + name : string.Empty)}";
             _observableThread.Start();
         }
 
